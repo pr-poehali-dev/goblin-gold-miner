@@ -1,0 +1,13 @@
+{
+  "tests": [
+    {
+      "name": "Инициализация игрока",
+      "method": "POST",
+      "path": "/?action=init",
+      "body": {
+        "user_id": "test_user_unique_789"
+      },
+      "expectedStatus": 200
+    }
+  ]
+}

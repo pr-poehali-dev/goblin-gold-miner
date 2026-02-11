@@ -1,28 +1,218 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useToast } from '@/hooks/use-toast';
 import Icon from '@/components/ui/icon';
 
+const GAME_API = 'https://functions.poehali.dev/e2a9b6ca-d781-44f6-9568-29dbaf48455b';
+const MARKET_API = 'https://functions.poehali.dev/97747066-a739-4755-b2da-0ddb0b7f946a';
+
 const Index = () => {
+  const [userId] = useState(() => {
+    const stored = localStorage.getItem('goblin_user_id');
+    if (stored) return stored;
+    const newId = 'user_' + Math.random().toString(36).substring(7);
+    localStorage.setItem('goblin_user_id', newId);
+    return newId;
+  });
+
   const [goblins, setGoblins] = useState(3000);
-  const [gold, setGold] = useState(42.5);
+  const [gold, setGold] = useState(0);
   const [tonBalance, setTonBalance] = useState(0);
-  const [memo] = useState('123456');
+  const [memo, setMemo] = useState('------');
   const [activeTab, setActiveTab] = useState('mining');
+  const [marketListings, setMarketListings] = useState<Array<{id: number, seller: string, amount: number, price: number, total: number}>>([]);
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
 
   const goldPerHour = goblins * 0.014;
   const goldPerSecond = goldPerHour / 3600;
 
-  const marketListings = [
-    { id: 1, seller: 'Player#4521', amount: 150, price: 0.045, total: 6.75 },
-    { id: 2, seller: 'Player#8392', amount: 250, price: 0.042, total: 10.5 },
-    { id: 3, seller: 'Player#1247', amount: 500, price: 0.040, total: 20.0 },
-    { id: 4, seller: 'Player#9876', amount: 100, price: 0.048, total: 4.8 },
-  ];
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const response = await fetch(`${GAME_API}?action=init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId })
+        });
+        const data = await response.json();
+        setGoblins(data.goblins);
+        setGold(data.gold);
+        setTonBalance(data.ton_balance);
+        setMemo(data.memo);
+      } catch (error) {
+        console.error('Init error:', error);
+      }
+    };
+    
+    init();
+    loadMarketListings();
+    
+    const interval = setInterval(() => {
+      setGold(prev => prev + goldPerSecond);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [userId, goldPerSecond]);
+
+  const initPlayer = async () => {
+    try {
+      const response = await fetch(`${GAME_API}?action=init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId })
+      });
+      const data = await response.json();
+      setGoblins(data.goblins);
+      setGold(data.gold);
+      setTonBalance(data.ton_balance);
+      setMemo(data.memo);
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось загрузить данные', variant: 'destructive' });
+    }
+  };
+
+  const loadMarketListings = async () => {
+    try {
+      const response = await fetch(`${MARKET_API}?action=listings`);
+      const data = await response.json();
+      setMarketListings(data.listings || []);
+    } catch (error) {
+      console.error('Ошибка загрузки маркета:', error);
+    }
+  };
+
+  const buyGoblins = async (packageType: string) => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${GAME_API}?action=buy-goblins`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, package: packageType })
+      });
+      const data = await response.json();
+      
+      if (data.error) {
+        toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
+      } else {
+        setGoblins(data.new_goblins);
+        setTonBalance(data.new_balance);
+        toast({ title: 'Успешно!', description: `Куплено ${packageType === 'small' ? '3000' : '15000'} гоблинов` });
+      }
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось купить гоблинов', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exchangeGold = async () => {
+    const goldInput = document.getElementById('gold-exchange') as HTMLInputElement;
+    const amount = parseFloat(goldInput?.value || '0');
+    
+    if (amount < 100) {
+      toast({ title: 'Ошибка', description: 'Минимум 100 кг золота', variant: 'destructive' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${GAME_API}?action=exchange-gold`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, gold_amount: amount })
+      });
+      const data = await response.json();
+      
+      if (data.error) {
+        toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
+      } else {
+        setGold(data.new_gold);
+        setGoblins(data.new_goblins);
+        toast({ title: 'Успешно!', description: `Получено ${data.goblins_received} гоблинов` });
+        if (goldInput) goldInput.value = '';
+      }
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось обменять золото', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createListing = async () => {
+    const amountInput = document.getElementById('sell-gold-amount') as HTMLInputElement;
+    const priceInput = document.getElementById('sell-gold-price') as HTMLInputElement;
+    
+    const amount = parseFloat(amountInput?.value || '0');
+    const price = parseFloat(priceInput?.value || '0');
+    
+    if (amount < 100) {
+      toast({ title: 'Ошибка', description: 'Минимум 100 кг золота', variant: 'destructive' });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${MARKET_API}?action=create-listing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, gold_amount: amount, price_per_kg: price })
+      });
+      const data = await response.json();
+      
+      if (data.error) {
+        toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
+      } else {
+        setGold(data.new_gold);
+        toast({ title: 'Успешно!', description: 'Объявление создано' });
+        loadMarketListings();
+        if (amountInput) amountInput.value = '';
+        if (priceInput) priceInput.value = '';
+      }
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось создать объявление', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const buyListing = async (listingId: number) => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${MARKET_API}?action=buy-listing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, listing_id: listingId })
+      });
+      const data = await response.json();
+      
+      if (data.error) {
+        toast({ title: 'Ошибка', description: data.error, variant: 'destructive' });
+      } else {
+        setGold(data.new_gold);
+        setTonBalance(data.new_balance);
+        toast({ title: 'Успешно!', description: `Куплено золото за ${data.paid.toFixed(4)} TON` });
+        loadMarketListings();
+      }
+    } catch (error) {
+      toast({ title: 'Ошибка', description: 'Не удалось купить золото', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const topUpBalance = () => {
+    toast({ 
+      title: 'Пополнение баланса', 
+      description: `Тестовое пополнение: +10 TON (в проде нужна TON интеграция)` 
+    });
+    setTonBalance(prev => prev + 10);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#1a1625] via-[#1f1933] to-[#251e3d] p-4 md:p-8">
@@ -93,7 +283,11 @@ const Index = () => {
                     <div className="font-semibold text-lg">3000 гоблинов</div>
                     <div className="text-sm text-muted-foreground">+42 кг золота в час</div>
                   </div>
-                  <Button className="bg-primary hover:bg-primary/90">
+                  <Button 
+                    className="bg-primary hover:bg-primary/90"
+                    onClick={() => buyGoblins('small')}
+                    disabled={loading || tonBalance < 1}
+                  >
                     <Icon name="Plus" className="w-4 h-4 mr-2" />
                     1 TON
                   </Button>
@@ -103,7 +297,11 @@ const Index = () => {
                     <div className="font-semibold text-lg">15000 гоблинов</div>
                     <div className="text-sm text-muted-foreground">+210 кг золота в час</div>
                   </div>
-                  <Button className="bg-primary hover:bg-primary/90">
+                  <Button 
+                    className="bg-primary hover:bg-primary/90"
+                    onClick={() => buyGoblins('large')}
+                    disabled={loading || tonBalance < 5}
+                  >
                     <Icon name="Plus" className="w-4 h-4 mr-2" />
                     5 TON
                   </Button>
@@ -138,7 +336,11 @@ const Index = () => {
                     </div>
                   </div>
                 </div>
-                <Button className="w-full bg-secondary hover:bg-secondary/90">
+                <Button 
+                  className="w-full bg-secondary hover:bg-secondary/90"
+                  onClick={exchangeGold}
+                  disabled={loading}
+                >
                   <Icon name="ArrowRightLeft" className="w-4 h-4 mr-2" />
                   Обменять
                 </Button>
@@ -148,50 +350,87 @@ const Index = () => {
 
           <TabsContent value="market" className="space-y-4 mt-6">
             <Card className="p-6 bg-card/50 backdrop-blur-sm border-secondary/20">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-2xl font-bold flex items-center gap-2">
+              <div className="mb-6">
+                <h3 className="text-2xl font-bold mb-4 flex items-center gap-2">
                   <Icon name="Store" className="text-secondary" />
-                  P2P Маркет золота
-                </h3>
-                <Button className="bg-accent hover:bg-accent/90">
-                  <Icon name="Plus" className="w-4 h-4 mr-2" />
                   Продать золото
+                </h3>
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <Label htmlFor="sell-gold-amount">Количество (кг)</Label>
+                    <Input 
+                      id="sell-gold-amount" 
+                      type="number" 
+                      placeholder="100" 
+                      className="mt-2 bg-muted/30"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="sell-gold-price">Цена за кг (TON)</Label>
+                    <Input 
+                      id="sell-gold-price" 
+                      type="number" 
+                      step="0.001"
+                      placeholder="0.045" 
+                      className="mt-2 bg-muted/30"
+                    />
+                  </div>
+                </div>
+                <Button 
+                  className="w-full bg-accent hover:bg-accent/90"
+                  onClick={createListing}
+                  disabled={loading}
+                >
+                  <Icon name="Plus" className="w-4 h-4 mr-2" />
+                  Создать объявление
                 </Button>
               </div>
 
-              <div className="space-y-3">
-                {marketListings.map((listing) => (
-                  <div 
-                    key={listing.id}
-                    className="p-4 rounded-lg bg-muted/30 border border-muted hover:border-accent/50 transition-all"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            {listing.seller}
-                          </Badge>
-                          <span className="text-sm text-muted-foreground">продаёт</span>
-                        </div>
-                        <div className="font-bold text-lg text-gold">
-                          {listing.amount} кг золота
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          по {listing.price} TON за кг
+              <div className="border-t border-border pt-6">
+                <h3 className="text-xl font-bold mb-4">Активные объявления</h3>
+                {marketListings.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">Пока нет объявлений</p>
+                ) : (
+                  <div className="space-y-3">
+                    {marketListings.map((listing) => (
+                      <div 
+                        key={listing.id}
+                        className="p-4 rounded-lg bg-muted/30 border border-muted hover:border-accent/50 transition-all"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {listing.seller}
+                              </Badge>
+                              <span className="text-sm text-muted-foreground">продаёт</span>
+                            </div>
+                            <div className="font-bold text-lg text-gold">
+                              {listing.amount} кг золота
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              по {listing.price} TON за кг
+                            </div>
+                          </div>
+                          <div className="text-right space-y-2">
+                            <div className="text-2xl font-bold text-accent">
+                              {listing.total.toFixed(2)} TON
+                            </div>
+                            <Button 
+                              size="sm" 
+                              className="bg-accent hover:bg-accent/90"
+                              onClick={() => buyListing(listing.id)}
+                              disabled={loading}
+                            >
+                              <Icon name="ShoppingBag" className="w-4 h-4 mr-2" />
+                              Купить
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right space-y-2">
-                        <div className="text-2xl font-bold text-accent">
-                          {listing.total.toFixed(2)} TON
-                        </div>
-                        <Button size="sm" className="bg-accent hover:bg-accent/90">
-                          <Icon name="ShoppingBag" className="w-4 h-4 mr-2" />
-                          Купить
-                        </Button>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
 
               <div className="mt-6 p-4 rounded-lg bg-accent/10 border border-accent/30">
@@ -232,6 +471,12 @@ const Index = () => {
                     <li>Баланс обновится автоматически через 1-2 минуты</li>
                   </ol>
                 </div>
+                <Button 
+                  className="w-full bg-accent hover:bg-accent/90"
+                  onClick={topUpBalance}
+                >
+                  Тестовое пополнение +10 TON
+                </Button>
               </div>
             </Card>
 
@@ -261,9 +506,9 @@ const Index = () => {
                 <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm text-muted-foreground">
                   ⚠️ Минимальная сумма вывода: 1 TON. Комиссия сети: ~0.01 TON
                 </div>
-                <Button className="w-full bg-destructive hover:bg-destructive/90">
+                <Button className="w-full bg-destructive hover:bg-destructive/90" disabled>
                   <Icon name="Send" className="w-4 h-4 mr-2" />
-                  Вывести
+                  Вывести (скоро)
                 </Button>
               </div>
             </Card>

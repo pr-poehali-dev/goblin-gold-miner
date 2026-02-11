@@ -1,0 +1,14 @@
+{
+  "tests": [
+    {
+      "name": "Получение списка активных объявлений",
+      "method": "GET",
+      "path": "/?action=listings",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "listings": []
+      },
+      "bodyMatcher": "partial"
+    }
+  ]
+}
